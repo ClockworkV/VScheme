@@ -68,127 +68,98 @@ vector<Token> tokenize(wistream& program)
 }
 
 
+struct Context;
 
 template<typename T>
-void print(const T& x, wostream& os)
-{
-	//os << x << '\n';
-	os << x ;
-}
+T Eval(const T& t, const Context& context) { return t; }
 
-
-struct Context;
+template<typename T>
+void Print(const T& t,  wostream& os) { Print(t, os); }
 
 struct Expression
 {
 	template<typename T>
-	Expression(const T& src):Expression_(new Impl<T>(src))
+	Expression(const T& src):mpImpl(new Model<T>(src))
+	{}
+
+	Expression eval(const Context& context) const
 	{
+		return mpImpl->eval_(context);
 	}
 
-	Expression(const Expression& src):Expression_(src.Expression_){}
-
-	friend void print(const Expression& x, std::wostream& os) 
+	void print(wostream& os) const
 	{
-		x.Expression_->print_(os);
-	}
-
-	friend Expression eval(const Expression& e, const Context& context)
-	{
-		return e.Expression_->eval(context);
+		mpImpl->print_(os);
 	}
 
 	template<typename T>
 	T get() const
 	{
-		auto impl = dynamic_cast<Impl<T>*>(Expression_.get());
-		if(impl)
+		auto ptr = dynamic_pointer_cast<Model<T>>(mpImpl);
+		if(ptr)
 		{
-			return impl->mData;
+			return ptr->data_;
 		}
-
-		throw;
+		throw "Invalid Type";
 	}
 
-private:
 	struct Concept
 	{
-		virtual void print_(std::wostream&) const = 0;
-		virtual Expression eval(const Context& context) const = 0;
+		virtual Expression eval_(const Context& context) const = 0;
+		virtual void print_(wostream& os) const = 0;
 	};
-	
+
 	template<typename T>
-	struct Impl : public Concept
+	struct Model : public Concept
 	{
-		Impl(const T& data):mData(data){}
+		Model(const T& t): data_(t){}
+
+		Expression eval_(const Context& context) const override
+		{
+			return Eval(data_, context);
+		}
 
 		void print_(wostream& os) const override
 		{
-			print(mData, os);
+			Print(data_, os);
 		}
 
-		Expression eval(const Context& context) const override
-		{
-			return *this;
-		}
-
-		T mData;
+		T data_;
 	};
 
-
-private:
-	shared_ptr<Concept> Expression_;
+	shared_ptr<Concept> mpImpl;
 };
 
 struct Number
 {
 	Number(int value): value_(value){}
 
-	Expression eval(const Context& context) const { return Expression(*this); }
+	friend 
+	Number Eval(const Number& n, const Context& context) { return Number(n.value_); }
 
 	operator int() const { return value_; }
 
-	void print_(std::wostream& os) const
-	{
-		os << value_;
-	}
+	friend void Print(const Number& number, std::wostream& os) {os << number.value_;}
 
 private:
 	int value_;
 };
-
-wostream& operator<<(wostream& os, const Number& num)
-{
-	num.print_(os);
-
-	return os;
-};
-
 
 
 struct Symbol
 {
 	Symbol(wstring value): value_(value){}
 
-	Expression eval(const Context& context) const { return Expression(*this); }
+	friend Symbol Eval(const Symbol& symbol, const Context& context) { return Symbol(symbol.value_); }
 
 	operator wstring() const { return value_; }
 
-	void print_(std::wostream& os) const
-	{
-		os << value_;
-	}
+	friend void Print(const Symbol& symbol, std::wostream& os)	{os << symbol.value_;}
 
 private:
 	wstring value_;
 };
 
-wostream& operator<<(wostream& os, const Symbol& symbol)
-{
-	symbol.print_(os);
-
-	return os;
-};
 
 Expression make_atom(Token token)
 {
@@ -230,12 +201,12 @@ struct OpPlus : public Op
 		return sum;
 	}
 
-	Expression eval(const Context& context) const
+	OpPlus eval(const Context& context) const
 	{
-		return Expression(0);
+		return *this;
 	}
-
 };
+
 
 struct List
 {
@@ -260,22 +231,18 @@ struct List
 		}
 	}
 
-	Expression eval(const Context& context) const
+	friend List eval(const List& list, const Context& context)
 	{
-		OpPlus op = list_.front().get<OpPlus>();
-
-		vector<Expression> args(++list_.begin(), list_.end());
-
-		return op(args);
+		return list;
 	}
 
-	void print_(wostream& os) const
+	friend void Print(const List& l, wostream& os)
 	{
 		os << "[";
 
-		for(const auto& expr : list_)
+		for(const auto& expr : l.list_)
 		{
-			print(expr, os);
+			expr.print(os);
 			os << ' ';
 		}
 
@@ -286,12 +253,6 @@ private:
 	vector<Expression> list_;
 };
 
-wostream& operator<<(wostream& os, const List& listExpr)
-{
-	listExpr.print_(os);
-
-	return os;
-}
 
 struct Context
 {
@@ -310,73 +271,21 @@ struct Context
 };
 
 
-wostream& operator<<(wostream& os, const OpPlus& op)
-{
-	op.print_(os);
-
-	return os;
-}
 
 
 
-
-
-
-typedef vector<Expression> Program;
 
 
 
 int main(int argc, char** argv)
 {
-	Context gContext;
+	auto tokens = tokenize(program_norwig);
 
-	gContext.map_.emplace(wstring(L"+"), Expression(OpPlus()));
+	Expression e(List(tokens.begin(), tokens.end()));
 
-	Program program;
-
-	//program.push_back(Number(1));
-	//program.push_back(wstring(L"Hello"));
-	//program.push_back(Number(5));
-
-
-	for(const auto& aExpr : program)
-	{
-		print(aExpr, wcout);
-	}
-
-	//wcout << program.front().get<Number>() << '\n';
-
-	//Program toSum = { 1, 2, 3 , wstring(L"Hello")};
-	//Program toSum = { 1, 2, 3 };
-
-	//auto op = OpPlus();
-
-	//auto sumExpr = op(toSum);
-
-	//wcout << L"sum = ";
-	
-	//print(sumExpr, wcout);
-	
-	wcout << '\n';
-
-	auto aTokens = tokenize(program_norwig);
-
-	auto myList = List(aTokens.begin(), aTokens.end());
-
-	print(myList, wcout);
+	e.print(wcout);
 
 	wcout << '\n';
-
-	aTokens = tokenize(program_test);
-
-	auto myList2 = List(aTokens.begin(), aTokens.end());
-
-	print(myList2, wcout);
-
-	wcout << '\n';
-
-
-
 
 	return 0;
 }
