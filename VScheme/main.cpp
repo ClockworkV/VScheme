@@ -76,7 +76,8 @@ void print(const T& x, wostream& os)
 	os << x ;
 }
 
-class Context;
+
+struct Context;
 
 struct Expression
 {
@@ -87,9 +88,14 @@ struct Expression
 
 	Expression(const Expression& src):Expression_(src.Expression_){}
 
-	friend void print(const Expression& x, wostream& os) 
+	friend void print(const Expression& x, std::wostream& os) 
 	{
 		x.Expression_->print_(os);
+	}
+
+	friend Expression eval(const Expression& e, const Context& context)
+	{
+		return e.Expression_->eval(context);
 	}
 
 	template<typename T>
@@ -107,7 +113,7 @@ struct Expression
 private:
 	struct Concept
 	{
-		virtual void print_(wostream&) const = 0;
+		virtual void print_(std::wostream&) const = 0;
 		virtual Expression eval(const Context& context) const = 0;
 	};
 	
@@ -121,6 +127,11 @@ private:
 			print(mData, os);
 		}
 
+		Expression eval(const Context& context) const override
+		{
+			return *this;
+		}
+
 		T mData;
 	};
 
@@ -129,22 +140,54 @@ private:
 	shared_ptr<Concept> Expression_;
 };
 
-
 struct Number
 {
 	Number(int value): value_(value){}
 
-	Expression eval() const { return Expression(*this); }
+	Expression eval(const Context& context) const { return Expression(*this); }
 
 	operator int() const { return value_; }
 
-	void print_(wostream& os) const
+	void print_(std::wostream& os) const
 	{
 		os << value_;
 	}
 
 private:
 	int value_;
+};
+
+wostream& operator<<(wostream& os, const Number& num)
+{
+	num.print_(os);
+
+	return os;
+};
+
+
+
+struct Symbol
+{
+	Symbol(wstring value): value_(value){}
+
+	Expression eval(const Context& context) const { return Expression(*this); }
+
+	operator wstring() const { return value_; }
+
+	void print_(std::wostream& os) const
+	{
+		os << value_;
+	}
+
+private:
+	wstring value_;
+};
+
+wostream& operator<<(wostream& os, const Symbol& symbol)
+{
+	symbol.print_(os);
+
+	return os;
 };
 
 Expression make_atom(Token token)
@@ -157,14 +200,42 @@ Expression make_atom(Token token)
 		
 		ss >> num;
 
-		return num;
+		return Number(num);
 	}
 	else
 	{
-		return token;
+		return Symbol(token);
 	}
 }
 
+typedef unary_function<vector<Expression>&, Expression> Op;
+
+
+struct OpPlus : public Op
+{
+	void print_(wostream& os) const
+	{
+		os << L"+";
+	}
+
+	Expression operator()(vector<Expression>& operands) const
+	{
+		int sum = 0;
+
+		for(const auto& operand : operands)
+		{
+			sum += operand.get<Number>();
+		}
+
+		return sum;
+	}
+
+	Expression eval(const Context& context) const
+	{
+		return Expression(0);
+	}
+
+};
 
 struct List
 {
@@ -189,7 +260,14 @@ struct List
 		}
 	}
 
-	Expression eval() const { return Expression(0); }
+	Expression eval(const Context& context) const
+	{
+		OpPlus op = list_.front().get<OpPlus>();
+
+		vector<Expression> args(++list_.begin(), list_.end());
+
+		return op(args);
+	}
 
 	void print_(wostream& os) const
 	{
@@ -215,31 +293,22 @@ wostream& operator<<(wostream& os, const List& listExpr)
 	return os;
 }
 
-typedef map<wstring, Expression> Context;
-
-
-
-
-struct OpPlus
+struct Context
 {
-	void print_(wostream& os) const
+	Expression Find(const Token& token) const
 	{
-		os << L"+";
-	}
-
-	Expression operator()(vector<Expression> operands)
-	{
-		int sum = 0;
-
-		for(const auto& operand : operands)
+		auto ret = map_.find(token);
+		if(ret != map_.end())
 		{
-			sum += operand.get<int>();
+			return ret->second;
 		}
 
-		return sum;
+		throw "Undefined symbol";
 	}
 
+	map<Token, Expression> map_;
 };
+
 
 wostream& operator<<(wostream& os, const OpPlus& op)
 {
@@ -261,13 +330,13 @@ int main(int argc, char** argv)
 {
 	Context gContext;
 
-	gContext.emplace(wstring(L"+"), Expression(OpPlus()));
+	gContext.map_.emplace(wstring(L"+"), Expression(OpPlus()));
 
 	Program program;
 
-	program.push_back(1);
-	program.push_back(wstring(L"Hello"));
-	program.push_back(Number(5));
+	//program.push_back(Number(1));
+	//program.push_back(wstring(L"Hello"));
+	//program.push_back(Number(5));
 
 
 	for(const auto& aExpr : program)
@@ -275,18 +344,18 @@ int main(int argc, char** argv)
 		print(aExpr, wcout);
 	}
 
-	wcout << program.front().get<int>() << '\n';
+	//wcout << program.front().get<Number>() << '\n';
 
 	//Program toSum = { 1, 2, 3 , wstring(L"Hello")};
-	Program toSum = { 1, 2, 3 };
+	//Program toSum = { 1, 2, 3 };
 
-	auto op = OpPlus();
+	//auto op = OpPlus();
 
-	auto sumExpr = op(toSum);
+	//auto sumExpr = op(toSum);
 
-	wcout << L"sum = ";
+	//wcout << L"sum = ";
 	
-	print(sumExpr, wcout);
+	//print(sumExpr, wcout);
 	
 	wcout << '\n';
 
