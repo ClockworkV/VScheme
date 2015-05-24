@@ -24,7 +24,7 @@ const Token closeParen = L")";
 
 bool IsNumber(const Token& token)
 {
-	return regex_match(token, wregex(L"[(-|+)|][0-9]+"));
+	return regex_match(token, wregex(L"[0-9]+"));
 }
 
 vector<Token> tokenize(wistream& program)
@@ -70,11 +70,11 @@ vector<Token> tokenize(wistream& program)
 
 struct Context;
 
-template<typename T>
-T Eval(const T& t, const Context& context) { return t; }
+//template<typename T>
+//T Eval(const T& t, const Context& context) { return t; }
 
 template<typename T>
-void Print(const T& t,  wostream& os) { Print(t, os); }
+void Print(const T& t,  wostream& os) {  }
 
 struct Expression
 {
@@ -130,12 +130,31 @@ struct Expression
 	shared_ptr<Concept> mpImpl;
 };
 
+struct Context
+{
+	Expression Find(const Token& token) const
+	{
+		auto ret = map_.find(token);
+		if(ret != map_.end())
+		{
+			return ret->second;
+		}
+
+		throw "Undefined symbol";
+	}
+
+	map<Token, Expression> map_;
+};
+
+
+Context gContext;
+
 struct Number
 {
 	Number(int value): value_(value){}
 
 	friend 
-	Number Eval(const Number& n, const Context& context) { return Number(n.value_); }
+	Expression Eval(const Number& n, const Context& context) { return Number(n.value_); }
 
 	operator int() const { return value_; }
 
@@ -150,7 +169,7 @@ struct Symbol
 {
 	Symbol(wstring value): value_(value){}
 
-	friend Symbol Eval(const Symbol& symbol, const Context& context) { return Symbol(symbol.value_); }
+	friend Expression Eval(const Symbol& symbol, const Context& context) { return context.Find(symbol.value_); }
 
 	operator wstring() const { return value_; }
 
@@ -184,7 +203,7 @@ typedef unary_function<vector<Expression>&, Expression> Op;
 
 struct OpPlus : public Op
 {
-	void print_(wostream& os) const
+	friend void Print(OpPlus, wostream& os)
 	{
 		os << L"+";
 	}
@@ -198,12 +217,12 @@ struct OpPlus : public Op
 			sum += operand.get<Number>();
 		}
 
-		return sum;
+		return Number(sum);
 	}
 
-	OpPlus eval(const Context& context) const
+	Expression eval(const Context& context) const
 	{
-		return *this;
+		return Symbol(L"+");
 	}
 };
 
@@ -231,9 +250,32 @@ struct List
 		}
 	}
 
-	friend List eval(const List& list, const Context& context)
+	friend Expression Eval(const List& list, const Context& context)
 	{
-		return list;
+		Expression result(Number(0));
+
+		for(const auto& aExpr : list.list_)
+		{
+			wstringstream ss;
+
+			aExpr.print(ss);
+
+			auto val = ss.str();
+
+			if(val == L"+")
+			{
+				auto operands = vector<Expression>(++list.list_.begin(), list.list_.end());
+				auto op = OpPlus();
+				auto result = op(operands);
+				return result;
+			}
+			else
+			{
+				result = aExpr.eval(context);
+			}
+		}
+
+		return result;
 	}
 
 	friend void Print(const List& l, wostream& os)
@@ -254,23 +296,6 @@ private:
 };
 
 
-struct Context
-{
-	Expression Find(const Token& token) const
-	{
-		auto ret = map_.find(token);
-		if(ret != map_.end())
-		{
-			return ret->second;
-		}
-
-		throw "Undefined symbol";
-	}
-
-	map<Token, Expression> map_;
-};
-
-
 
 
 
@@ -284,6 +309,34 @@ int main(int argc, char** argv)
 	Expression e(List(tokens.begin(), tokens.end()));
 
 	e.print(wcout);
+
+	wcout << '\n';
+
+
+
+	gContext.map_.emplace(wstring(L"hello"), Expression(Number(10)));
+
+	auto h = Expression(Symbol(wstring(L"hello")));
+
+	auto expr = h.eval(gContext);
+
+	expr.print(wcout);
+	
+	wcout << '\n';
+
+	//wstring input;
+
+	//getline(wcin, input);
+
+	auto sumTokens_ = tokenize(wstringstream(L"(+ 1 2 3)"));
+	//auto sumTokens = tokenize(wstringstream(input));
+	
+	auto sumExpr_ = Expression(List(sumTokens_.begin(), sumTokens_.end()));
+	//auto sumExpr = Expression(List(sumTokens.begin(), sumTokens.end()));
+
+	auto result = sumExpr_.eval(gContext);
+
+	result.print(wcout);
 
 	wcout << '\n';
 
