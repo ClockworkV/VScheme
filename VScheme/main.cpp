@@ -6,13 +6,20 @@
 #include <sstream>
 #include <vector>
 #include <memory>
+#include <regex>
 
 using namespace std;
 
 typedef wstring Token;
+typedef vector<Token>::iterator TokenItr;
+
 const Token openParen = L"(";
 const Token closeParen = L")";
 
+bool IsNumber(const Token& token)
+{
+	return regex_match(token, wregex(L"[(-|+)|][0-9]+"));
+}
 
 vector<Token> tokenize(wistream& program)
 {
@@ -53,118 +60,26 @@ vector<Token> tokenize(wistream& program)
 
 enum class Type
 {
-	NONE, FIXNUM, SYMBOL, LIST,
+	NONE, NUMBER, SYMBOL, LIST, PROC, LAMBDA
 };
 
 
 class Context;
 
-struct ObjectImpl : public enable_shared_from_this<ObjectImpl>
+
+struct ObjectImplBase : public enable_shared_from_this<ObjectImplBase>
 {
-	ObjectImpl(Type type):mType(type){};
+	virtual Type getType() const = 0;
 
-	Type getType() const { return mType; }
-
-	virtual	shared_ptr<ObjectImpl> evaluate(Context& context) = 0;
+	virtual	shared_ptr<ObjectImplBase> evaluate(Context& context) = 0;
 
 	virtual void print(wostream& os) const = 0;
-
-private:
-	const Type mType;
 };
-
-struct Int : public ObjectImpl
-{
-	Int(int value):ObjectImpl(Type::FIXNUM), mValue(value)
-	{}
-
-	shared_ptr<ObjectImpl> evaluate(Context& context) override
-	{
-		return shared_from_this();
-	}
-
-	virtual void print(wostream& os) const
-	{
-		os << mValue;
-	}
-
-private:
-	int mValue;
-};
-
-
-struct Symbol : public ObjectImpl
-{
-	Symbol(wstring symbol) : ObjectImpl(Type::SYMBOL), mValue(symbol)
-	{}
-
-	shared_ptr<ObjectImpl> evaluate(Context& context) override
-	{
-		return shared_from_this();
-	}
-
-	void print(wostream& os) const override
-	{
-		os << mValue;
-	}
-
-private:
-	const wstring mValue;
-};
-
-
-struct List : public ObjectImpl
-{
-
-	List(): ObjectImpl(Type::LIST){}
-
-	shared_ptr<ObjectImpl> evaluate(Context& context) override
-	{
-		return nullptr;
-	}
-
-	void print(wostream& os) const override
-	{
-	}
-
-
-private:
-	vector<ObjectImpl> mList;
-};
-
 
 
 struct Object
 {
-	Object(Type type, Token valueToken)
-	{
-		switch(type)
-		{
-		case Type::FIXNUM:
-			{
-				wstringstream ss(valueToken);
-
-				int value;
-
-				ss >> value;
-
-				if(ss.good())
-				{
-					mpImpl = make_shared<Int>(value);
-				}
-			}
-			break;
-
-		case Type::SYMBOL:
-			mpImpl = make_shared<Symbol>(valueToken);
-			break;
-
-		case Type::LIST:
-		case Type::NONE:
-		default:
-			break;
-		}
-	}
+	Object(const TokenItr valueToken);
 
 	Object(const Object& src):mpImpl(src.mpImpl)
 	{}
@@ -184,16 +99,106 @@ struct Object
 		mpImpl->print(os);
 	}
 
+	static const Object gEmptyList; 
+
 private:
 
-	Object(shared_ptr<ObjectImpl> pValue)
+	Object(shared_ptr<ObjectImplBase> pValue)
 	{
 		mpImpl = pValue;
 	}
 
-
-	shared_ptr<ObjectImpl> mpImpl;
+	shared_ptr<ObjectImplBase> mpImpl;
 };
+
+const Object Object::gEmptyList = Object(nullptr);
+
+
+
+
+template<Type T>
+struct ObjectImpl : public ObjectImplBase 
+{
+	Type getType() const override { return T; }
+};
+
+struct Int : public ObjectImpl<Type::NUMBER>
+{
+	Int(int value):mValue(value)
+	{}
+
+	shared_ptr<ObjectImplBase> evaluate(Context& context) override
+	{
+		return shared_from_this();
+	}
+
+	void print(wostream& os) const override
+	{
+		os << mValue;
+	}
+
+
+
+private:
+	int mValue;
+};
+
+
+struct Symbol : public ObjectImpl<Type::SYMBOL>
+{
+	Symbol(wstring symbol) : mValue(symbol)
+	{}
+
+	shared_ptr<ObjectImplBase> evaluate(Context& context) override
+	{
+		return shared_from_this();
+	}
+
+	void print(wostream& os) const override
+	{
+		os << mValue;
+	}
+
+private:
+	const wstring mValue;
+};
+
+
+struct List : public ObjectImpl<Type::LIST>
+{
+
+	List(){}
+
+	shared_ptr<ObjectImplBase> evaluate(Context& context) override
+	{
+		return nullptr;
+	}
+
+	void print(wostream& os) const override
+	{
+	}
+
+	void Add(Object object)
+	{
+		mList.push_back(object);
+	}
+
+	Object Car() const
+	{
+		if(mList.size() >= 1)
+		{
+			return mList.front();
+		}
+		else
+		{
+			return Object(make_shared<List>());
+		}
+	}
+
+private:
+	vector<Object> mList;
+};
+
 
 
 Object read(vector<Token> tokens)
@@ -203,7 +208,7 @@ Object read(vector<Token> tokens)
 
 	if(*currentTokenItr == openParen)
 	{
-		auto listOfObjects = Object(Type::LIST, L"");
+		auto listOfObjects = Object();
 
 		currentTokenItr++;
 
@@ -212,7 +217,7 @@ Object read(vector<Token> tokens)
 	}
 	else
 	{
-		return Object(Type::FIXNUM, tokens.front());
+		return Object(Type::NUMBER, tokens.front());
 	}
 }
 
@@ -242,4 +247,29 @@ int main(int argc, char** argv)
 	}
 	
 	return 0;
+}
+
+inline Object::Object(const TokenItr valueToken)
+{
+	if(IsNumber(*valueToken))
+	{
+		wstringstream ss(*valueToken);
+
+		int value;
+
+		ss >> value;
+
+		if(ss.good())
+		{
+			mpImpl = make_shared<Int>(value);
+		}
+	}
+	else if(*valueToken == openParen)
+	{
+		mpImpl = make_shared<List>();
+	}
+	else
+	{
+		mpImpl = make_shared<Symbol>(valueToken);
+	}
 }
