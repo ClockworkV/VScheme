@@ -10,6 +10,7 @@
 #include <map>
 #include <algorithm>
 #include <functional>
+#include <deque>
 
 using namespace std;
 
@@ -17,19 +18,23 @@ wstringstream program_test(L" 10 ( hello?) (hello -5) ( hi ( one two))  ");
 wstringstream program_norwig(L"(begin (define r 10) (* pi (* r r)))");
 
 typedef wstring Token;
-typedef vector<Token>::iterator TokenItr;
 
 const Token openParen = L"(";
 const Token closeParen = L")";
 
 bool IsNumber(const Token& token)
 {
-	return regex_match(token, wregex(L"[0-9]+"));
+	return regex_match(token, wregex(L"-?[[:digit:]]+"));
 }
 
-vector<Token> tokenize(wistream& program)
+bool IsValidSymbol(const Token& token)
 {
-	vector<Token> tokens;
+	return regex_match(token, wregex(L"[^[:digit:]()]+"));
+}
+
+deque<Token> tokenize(wistream& program)
+{
+	deque<Token> tokens;
 
 	istreambuf_iterator<wchar_t> itr(program);
 	istreambuf_iterator<wchar_t> eos;
@@ -70,12 +75,6 @@ vector<Token> tokenize(wistream& program)
 
 struct Context;
 
-//template<typename T>
-//T Eval(const T& t, const Context& context) { return t; }
-
-template<typename T>
-void Print(const T& t,  wostream& os) {  }
-
 struct Expression
 {
 	template<typename T>
@@ -92,8 +91,14 @@ struct Expression
 		mpImpl->print_(os);
 	}
 
+	Expression operator()(vector<Expression>& args) const
+	{
+		return mpImpl->do_(args);
+	}
+
+
 	template<typename T>
-	T get() const
+	const T& get() const
 	{
 		auto ptr = dynamic_pointer_cast<Model<T>>(mpImpl);
 		if(ptr)
@@ -107,6 +112,7 @@ struct Expression
 	{
 		virtual Expression eval_(const Context& context) const = 0;
 		virtual void print_(wostream& os) const = 0;
+		virtual Expression do_(vector<Expression>& args) const = 0;
 	};
 
 	template<typename T>
@@ -124,15 +130,34 @@ struct Expression
 			Print(data_, os);
 		}
 
+		Expression do_(vector<Expression>& args) const override
+		{
+			return Do(data_, args);
+		}
+
+
 		T data_;
 	};
 
 	shared_ptr<Concept> mpImpl;
 };
 
+
+template<typename T>
+Expression Eval(const T& list, const Context& context);
+
+template<typename T>
+Expression Do(const T& f, vector<Expression>& args)
+{
+	throw "Can't do!";
+	return Expression(Number(0));
+}
+
+
+
 struct Context
 {
-	Expression Find(const Token& token) const
+	const Expression& Find(const Token& token) const
 	{
 		auto ret = map_.find(token);
 		if(ret != map_.end())
@@ -180,6 +205,12 @@ private:
 };
 
 
+bool is_atom(Token token)
+{
+	return IsNumber(token) || IsValidSymbol(token);
+}
+
+
 Expression make_atom(Token token)
 {
 	if(IsNumber(token))
@@ -198,56 +229,100 @@ Expression make_atom(Token token)
 	}
 }
 
-typedef unary_function<vector<Expression>&, Expression> Op;
+typedef function<Expression(vector<Expression>&)> Op;
 
 
 struct OpPlus : public Op
 {
-	friend void Print(OpPlus, wostream& os)
+	friend void Print(const Op&, wostream& os) 
 	{
 		os << L"+";
 	}
 
 	Expression operator()(vector<Expression>& operands) const
 	{
-		int sum = 0;
+		int sum = operands.back().eval(gContext).get<Number>();
+
+		operands.pop_back();
 
 		for(const auto& operand : operands)
 		{
-			sum += operand.get<Number>();
+			sum += operand.eval(gContext).get<Number>();
 		}
 
 		return Number(sum);
 	}
 
-	Expression eval(const Context& context) const
+	friend Expression Do(const OpPlus& f, vector<Expression>& args)
+	{
+		return f(args);
+	}
+
+	friend Expression Eval(const OpPlus&, const Context& context) 
 	{
 		return Symbol(L"+");
 	}
 };
 
+struct OpMinus : public Op
+{
+	friend void Print(const OpMinus&, wostream& os)
+	{
+		os << L"-";
+	}
+
+	Expression operator()(vector<Expression>& operands) const
+	{
+		int sum = operands.back().eval(gContext).get<Number>();
+
+		operands.pop_back();
+
+		for(const auto& operand : operands)
+		{
+			sum -= operand.eval(gContext).get<Number>();
+		}
+
+		return Number(sum);
+	}
+
+	friend Expression Do(const OpMinus& f, vector<Expression>& args)
+	{
+		return f(args);
+	}
+
+	friend Expression Eval(const OpMinus&, const Context& context)
+	{
+		return Symbol(L"-");
+	}
+};
 
 struct List
 {
-	List(vector<Token>::iterator& itr, const vector<Token>::iterator& last)
+	List(){}
+
+	static Expression read(deque<Token>& tokens)
 	{
-		while(itr != last)
+		List ret;
+
+		while(tokens.front() != closeParen)
 		{
-			if(*itr == openParen)
+			if(tokens.front() == openParen)
 			{
-				list_.emplace_back(List(++itr, last));
-			}
-			else if(*itr == closeParen)
-			{
-				itr++;
-				return;
+				tokens.pop_front();
+
+				ret.Add(List::read(tokens));
 			}
 			else
 			{
-				list_.push_back(make_atom(*itr));
-				itr++;
+				ret.Add(make_atom(tokens.front()));
+
+				tokens.pop_front();
 			}
 		}
+
+		tokens.pop_front();
+
+		return ret;
 	}
 
 	friend Expression Eval(const List& list, const Context& context)
@@ -262,17 +337,12 @@ struct List
 
 			auto val = ss.str();
 
-			if(val == L"+")
-			{
-				auto operands = vector<Expression>(++list.list_.begin(), list.list_.end());
-				auto op = OpPlus();
-				auto result = op(operands);
-				return result;
-			}
-			else
-			{
-				result = aExpr.eval(context);
-			}
+			const auto& opExp = context.Find(val); 
+
+
+			auto operands = vector<Expression>(list.list_.rbegin(), --list.list_.rend());
+			auto result = opExp(operands);
+			return result;
 		}
 
 		return result;
@@ -291,12 +361,45 @@ struct List
 		os << "]";
 	}
 
+	void Add(Expression item)
+	{
+		list_.push_back(item);
+	}
+
+	Expression operator()(vector<Expression>&) const
+	{
+		throw "I'm a list, dammit";
+	}
 private:
 	vector<Expression> list_;
 };
 
 
 
+vector<Expression> read(deque<Token>& tokens)
+{
+
+	vector<Expression> aProgram;
+
+	while(!tokens.empty())
+	{
+		if(tokens.front() == openParen)
+		{
+			tokens.pop_front();
+
+			aProgram.push_back(List::read(tokens));
+		}
+		else
+		{
+			aProgram.push_back(make_atom(tokens.front()));
+
+			tokens.pop_front();
+		}
+	}
+
+	return aProgram;
+
+}
 
 
 
@@ -304,41 +407,62 @@ private:
 
 int main(int argc, char** argv)
 {
-	auto tokens = tokenize(program_norwig);
+	//cout << IsValidSymbol(L"number?") << '\n';
+	//cout << IsValidSymbol(L"-number?") << '\n';
+	//cout << IsValidSymbol(L"0") << '\n';
+	//cout << IsValidSymbol(L"(0)") << '\n';
 
-	Expression e(List(tokens.begin(), tokens.end()));
+	//auto tokens = tokenize(program_norwig);
 
-	e.print(wcout);
+	//Expression e(List(tokens.begin(), tokens.end()));
 
-	wcout << '\n';
+	//e.print(wcout);
+
+	//wcout << '\n';
 
 
 
-	gContext.map_.emplace(wstring(L"hello"), Expression(Number(10)));
+	//gContext.map_.emplace(wstring(L"hello"), Expression(Number(10)));
 
-	auto h = Expression(Symbol(wstring(L"hello")));
+	//auto h = Expression(Symbol(wstring(L"hello")));
 
-	auto expr = h.eval(gContext);
+	//auto expr = h.eval(gContext);
 
-	expr.print(wcout);
-	
-	wcout << '\n';
+	//expr.print(wcout);
+	//
+	//wcout << '\n';
 
-	//wstring input;
+	gContext.map_.emplace(L"+", OpPlus());
+	gContext.map_.emplace(L"-", OpMinus());
 
-	//getline(wcin, input);
+	try{
+		while(1)
+		{
+			wcout << L">";
 
-	auto sumTokens_ = tokenize(wstringstream(L"(+ 1 2 3)"));
-	//auto sumTokens = tokenize(wstringstream(input));
-	
-	auto sumExpr_ = Expression(List(sumTokens_.begin(), sumTokens_.end()));
-	//auto sumExpr = Expression(List(sumTokens.begin(), sumTokens.end()));
+			wstring input;
 
-	auto result = sumExpr_.eval(gContext);
+			getline(wcin, input);
 
-	result.print(wcout);
+			auto sumTokens = tokenize(wstringstream(input));
 
-	wcout << '\n';
+			auto sumExpr = read(sumTokens);
 
+			for(const auto aExpression : sumExpr)
+			{
+				auto result = aExpression.eval(gContext);
+
+				result.print(wcout);
+
+				wcout << '\n';
+			}
+
+
+		}
+	}
+	catch(char* c)
+	{
+		cout << c << '\n';
+	}
 	return 0;
 }
