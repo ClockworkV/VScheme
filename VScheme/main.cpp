@@ -296,6 +296,38 @@ struct OpMinus : public Op
 	}
 };
 
+struct OpMult : public Op
+{
+	friend void Print(const OpMult&, wostream& os)
+	{
+		os << L"*";
+	}
+
+	Expression operator()(vector<Expression>& operands) const
+	{
+		int prod = operands.back().eval(gContext).get<Number>();
+
+		operands.pop_back();
+
+		for(const auto& operand : operands)
+		{
+			prod *= operand.eval(gContext).get<Number>();
+		}
+
+		return Number(prod);
+	}
+
+	friend Expression Do(const OpMult& f, vector<Expression>& args)
+	{
+		return f(args);
+	}
+
+	friend Expression Eval(const OpMult&, const Context& context)
+	{
+		return Symbol(L"*");
+	}
+};
+
 struct List
 {
 	List(){}
@@ -434,7 +466,9 @@ int main(int argc, char** argv)
 
 	gContext.map_.emplace(L"+", OpPlus());
 	gContext.map_.emplace(L"-", OpMinus());
+	gContext.map_.emplace(L"*", OpMult());
 
+	
 	try{
 		while(1)
 		{
@@ -446,9 +480,9 @@ int main(int argc, char** argv)
 
 			auto sumTokens = tokenize(wstringstream(input));
 
-			auto sumExpr = read(sumTokens);
+			auto sumExpr = read(sumTokens); 
 
-			for(const auto aExpression : sumExpr)
+			for(const auto& aExpression : sumExpr)
 			{
 				auto result = aExpression.eval(gContext);
 
@@ -456,8 +490,6 @@ int main(int argc, char** argv)
 
 				wcout << '\n';
 			}
-
-
 		}
 	}
 	catch(char* c)
